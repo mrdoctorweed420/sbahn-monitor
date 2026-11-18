@@ -1,0 +1,41 @@
+name: Erreichbarkeitstest
+on: [workflow_dispatch]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: API-Varianten testen
+        run: |
+          UA="sbahn-monitor/1.0 (private Auswertung von Fahrzeugumlaeufen der S-Bahn Stuttgart, max. 10 Anfragen/min)"
+          URL=https://bahn.expert/api/orpc/iris/departures
+          BODY='{"json":{"evaNumber":"8006271","lookahead":0,"lookbehind":120}}'
+          probe () {
+            echo "--- $1"
+            shift
+            curl -sS -D kopf.txt -o leib.txt -m 25 -A "$UA" "$@" || { echo "   FEHLER"; return; }
+            head -1 kopf.txt | sed 's/^/   /'
+            grep -i '^content-type' kopf.txt | sed 's/^/   /'
+            echo "   $(wc -c < leib.txt) Bytes:"
+            head -c 220 leib.txt | tr -d '\n' | sed 's/^/   /'; echo
+            sleep 6
+          }
+          {
+            echo "Test vom $(date -u '+%Y-%m-%d %H:%M UTC')"
+            probe "A) POST, Accept json" -H 'content-type: application/json' -H 'accept: application/json' -d "$BODY" "$URL"
+            probe "B) POST, ohne Accept"  -H 'content-type: application/json' -d "$BODY" "$URL"
+            probe "C) GET mit input"      -H 'accept: application/json' --get --data-urlencode "input=$BODY" "$URL"
+            probe "D) POST, roh" -H 'content-type: application/json' -H 'accept: application/json' \
+                  -d '{"evaNumber":"8006271","lookahead":0,"lookbehind":120}' "$URL"
+          } > test-ergebnis.txt 2>&1
+          rm -f kopf.txt leib.txt
+          cat test-ergebnis.txt
+      - name: Ergebnis zurueckschreiben
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test-ergebnis.txt
+          git commit -m "Erreichbarkeitstest" || exit 0
+          git push
